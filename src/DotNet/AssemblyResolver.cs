@@ -629,6 +629,8 @@ namespace dnlib.DotNet {
 		}
 
 		IEnumerable<string> GetDirs(string baseDir) {
+			if (!Directory.Exists(baseDir))
+				return emtpyStringArray;
 			var dirs = new List<string>();
 			try {
 				foreach (var di in new DirectoryInfo(baseDir).GetDirectories())
@@ -638,6 +640,7 @@ namespace dnlib.DotNet {
 			}
 			return dirs;
 		}
+		static readonly string[] emtpyStringArray = new string[0];
 
 		IEnumerable<string> FindAssembliesModuleSearchPaths(IAssembly assembly, ModuleDef sourceModule, bool matchExactly) {
 			string asmSimpleName = UTF8String.ToSystemStringOrEmpty(assembly.Name);
@@ -879,6 +882,8 @@ namespace dnlib.DotNet {
 		}
 
 		static void AddSilverlightDirs(IList<string> paths, string basePath) {
+			if (!Directory.Exists(basePath))
+				return;
 			try {
 				var di = new DirectoryInfo(basePath);
 				foreach (var dir in di.GetDirectories()) {
