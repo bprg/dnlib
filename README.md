@@ -13,6 +13,8 @@ For another application using dnlib, see [ConfuserEx](https://github.com/yck1509
 a look at its writer code which gets executed during the assembly writing
 process.
 
+Want to say thanks? Click the star at the top of the page.
+
 Compiling
 ---------
 
@@ -104,15 +106,9 @@ To detect it at runtime, use this code:
 PDB files
 ---------
 
-Right after opening the module, call one of its `LoadPdb()` methods. You can
-also pass in a `ModuleCreationOptions` to `ModuleDefMD.Load()` and if one of
-the PDB options is enabled, the PDB file will be opened before `Load()`
-returns.
-
-```csharp
-    var mod = ModuleDefMD.Load(@"C:\myfile.dll");
-    mod.LoadPdb();	// Will load C:\myfile.pdb if it exists
-```
+PDB files are read from disk by default. You can change this behaviour by
+creating a `ModuleCreationOptions` and passing it in to the code that creates
+a module.
 
 To save a PDB file, create a `ModuleWriterOptions` /
 `NativeModuleWriterOptions` and set its `WritePdb` property to `true`. By
@@ -120,9 +116,7 @@ default, it will create a PDB file with the same name as the output assembly
 but with a `.pdb` extension. You can override this by writing the PDB file
 name to `PdbFileName` or writing your own stream to `PdbStream`. If
 `PdbStream` is initialized, `PdbFileName` should also be initialized because
-the name of the PDB file will be written to the PE file. Another more
-advanced property is `CreatePdbSymbolWriter` which returns a `ISymbolWriter2`
-instance that dnlib will use.
+the name of the PDB file will be written to the PE file.
 
 ```csharp
     var mod = ModuleDefMD.Load(@"C:\myfile.dll");
@@ -133,10 +127,7 @@ instance that dnlib will use.
     mod.Write(@"C:\out.dll", wopts);
 ```
 
-There exist two different types of PDB readers, one is using the Microsoft
-COM PDB API available in diasymreader.dll (for Windows only), and the other
-one, which is now the default implementation, is a managed PDB reader. The PDB
-writer currently only uses the COM PDB API so will only work on Windows.
+dnlib supports Windows PDBs, portable PDBs and embedded portable PDBs.
 
 Strong name sign an assembly
 ----------------------------

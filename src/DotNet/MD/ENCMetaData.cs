@@ -2,6 +2,7 @@
 
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using dnlib.IO;
 using dnlib.PE;
 using dnlib.Threading;
@@ -30,14 +31,27 @@ namespace dnlib.DotNet.MD {
 		}
 
 		/// <inheritdoc/>
-		protected override void InitializeInternal() {
+		internal ENCMetaData(MetaDataHeader mdHeader, bool isStandalonePortablePdb)
+			: base(mdHeader, isStandalonePortablePdb) {
+		}
+
+		/// <inheritdoc/>
+		protected override void InitializeInternal(IImageStream mdStream) {
+			bool disposeOfMdStream = false;
 			IImageStream imageStream = null;
 			DotNetStream dns = null;
 			try {
-				var mdRva = cor20Header.MetaData.VirtualAddress;
+				if (peImage != null) {
+					Debug.Assert(mdStream == null);
+					Debug.Assert(cor20Header != null);
+					var mdOffset = peImage.ToFileOffset(cor20Header.MetaData.VirtualAddress);
+					mdStream = peImage.CreateStream(mdOffset, cor20Header.MetaData.Size);
+					disposeOfMdStream = true;
+				}
+				else
+					Debug.Assert(mdStream != null);
 				foreach (var sh in mdHeader.StreamHeaders) {
-					var rva = mdRva + sh.Offset;
-					imageStream = peImage.CreateStream(rva, sh.StreamSize);
+					imageStream = mdStream.Create((FileOffset)sh.Offset, sh.StreamSize);
 					switch (sh.Name.ToUpperInvariant()) {
 					case "#STRINGS":
 						if (stringsStream == null) {
@@ -84,6 +98,17 @@ namespace dnlib.DotNet.MD {
 							continue;
 						}
 						break;
+
+					case "#PDB":
+						// Case sensitive comparison since it's a stream that's not read by the CLR,
+						// only by other libraries eg. System.Reflection.Metadata.
+						if (isStandalonePortablePdb && pdbStream == null && sh.Name == "#Pdb") {
+							pdbStream = new PdbStream(imageStream, sh);
+							imageStream = null;
+							allStreams.Add(pdbStream);
+							continue;
+						}
+						break;
 					}
 					dns = new DotNetStream(imageStream, sh);
 					imageStream = null;
@@ -92,6 +117,8 @@ namespace dnlib.DotNet.MD {
 				}
 			}
 			finally {
+				if (disposeOfMdStream)
+					mdStream.Dispose();
 				if (imageStream != null)
 					imageStream.Dispose();
 				if (dns != null)
@@ -100,7 +127,11 @@ namespace dnlib.DotNet.MD {
 
 			if (tablesStream == null)
 				throw new BadImageFormatException("Missing MD stream");
-			tablesStream.Initialize(peImage);
+
+			if (pdbStream != null)
+				tablesStream.Initialize(pdbStream.TypeSystemTableRows);
+			else
+				tablesStream.Initialize(null);
 
 			// The pointer tables are used iff row count != 0
 			hasFieldPtr = !tablesStream.FieldPtrTable.IsEmpty;

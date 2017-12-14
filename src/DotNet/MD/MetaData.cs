@@ -4,6 +4,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using dnlib.IO;
 using dnlib.PE;
 using dnlib.Threading;
 
@@ -59,9 +60,21 @@ namespace dnlib.DotNet.MD {
 		protected TablesStream tablesStream;
 
 		/// <summary>
+		/// The #Pdb stream
+		/// </summary>
+		protected PdbStream pdbStream;
+
+		/// <summary>
 		/// All the streams that are present in the PE image
 		/// </summary>
 		protected ThreadSafe.IList<DotNetStream> allStreams;
+
+		/// <inheritdoc/>
+		public bool IsStandalonePortablePdb {
+			get { return isStandalonePortablePdb; }
+		}
+		/// <summary><c>true</c> if this is standalone Portable PDB metadata</summary>
+		protected readonly bool isStandalonePortablePdb;
 
 		uint[] fieldRidToTypeDefRid;
 		uint[] methodRidToTypeDefRid;
@@ -240,6 +253,11 @@ namespace dnlib.DotNet.MD {
 		}
 
 		/// <inheritdoc/>
+		public PdbStream PdbStream {
+			get { return pdbStream; }
+		}
+
+		/// <inheritdoc/>
 		public ThreadSafe.IList<DotNetStream> AllStreams {
 			get { return allStreams; }
 		}
@@ -256,6 +274,7 @@ namespace dnlib.DotNet.MD {
 				this.peImage = peImage;
 				this.cor20Header = cor20Header;
 				this.mdHeader = mdHeader;
+				isStandalonePortablePdb = false;
 			}
 			catch {
 				if (peImage != null)
@@ -264,14 +283,24 @@ namespace dnlib.DotNet.MD {
 			}
 		}
 
+		internal MetaData(MetaDataHeader mdHeader, bool isStandalonePortablePdb) {
+			this.allStreams = ThreadSafeListCreator.Create<DotNetStream>();
+			this.peImage = null;
+			this.cor20Header = null;
+			this.mdHeader = mdHeader;
+			this.isStandalonePortablePdb = isStandalonePortablePdb;
+		}
+
 		/// <summary>
 		/// Initializes the metadata, tables, streams
 		/// </summary>
-		public void Initialize() {
-			InitializeInternal();
+		public void Initialize(IImageStream mdStream) {
+			InitializeInternal(mdStream);
 
 			if (tablesStream == null)
 				throw new BadImageFormatException("Missing MD stream");
+			if (isStandalonePortablePdb && pdbStream == null)
+				throw new BadImageFormatException("Missing #Pdb stream");
 			InitializeNonExistentHeaps();
 		}
 
@@ -290,9 +319,9 @@ namespace dnlib.DotNet.MD {
 		}
 
 		/// <summary>
-		/// Called by <see cref="Initialize()"/>
+		/// Called by <see cref="Initialize(IImageStream)"/>
 		/// </summary>
-		protected abstract void InitializeInternal();
+		protected abstract void InitializeInternal(IImageStream mdStream);
 
 		/// <inheritdoc/>
 		public virtual RidList GetTypeDefRidList() {
@@ -815,6 +844,22 @@ namespace dnlib.DotNet.MD {
 			if (typeDefRidToNestedClasses == null)
 				InitializeNestedClassesDictionary();
 			return nonNestedTypes;
+		}
+
+		public RidList GetLocalScopeRidList(uint methodRid) {
+			return FindAllRows(tablesStream.LocalScopeTable, 0, methodRid);
+		}
+
+		public uint GetStateMachineMethodRid(uint methodRid) {
+			var list = FindAllRows(tablesStream.StateMachineMethodTable, 0, methodRid);
+			return list.Length == 0 ? 0 : list[0];
+		}
+
+		public RidList GetCustomDebugInformationRidList(Table table, uint rid) {
+			uint codedToken;
+			if (!CodedToken.HasCustomDebugInformation.Encode(new MDToken(table, rid), out codedToken))
+				return RidList.Empty;
+			return FindAllRows(tablesStream.CustomDebugInformationTable, 0, codedToken);
 		}
 
 		/// <inheritdoc/>

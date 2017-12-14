@@ -7,12 +7,12 @@ using System.Diagnostics.SymbolStore;
 using dnlib.DotNet.Emit;
 using dnlib.DotNet.Writer;
 
-namespace dnlib.DotNet.Pdb {
+namespace dnlib.DotNet.Pdb.WindowsPdb {
 	/// <summary>
 	/// PDB writer
 	/// </summary>
 	/// <remarks>This class is not thread safe because it's a writer class</remarks>
-	public sealed class PdbWriter : IDisposable {
+	public sealed class WindowsPdbWriter : IDisposable {
 		ISymbolWriter2 writer;
 		ISymbolWriter3 writer3;
 		readonly PdbState pdbState;
@@ -35,7 +35,7 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="writer">Symbol writer, it should implement <see cref="ISymbolWriter3"/></param>
 		/// <param name="pdbState">PDB state</param>
 		/// <param name="metaData">Meta data</param>
-		public PdbWriter(ISymbolWriter2 writer, PdbState pdbState, MetaData metaData)
+		public WindowsPdbWriter(ISymbolWriter2 writer, PdbState pdbState, MetaData metaData)
 			: this(pdbState, metaData) {
 			if (writer == null)
 				throw new ArgumentNullException("writer");
@@ -55,7 +55,7 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="writer">Symbol writer</param>
 		/// <param name="pdbState">PDB state</param>
 		/// <param name="metaData">Meta data</param>
-		public PdbWriter(ISymbolWriter3 writer, PdbState pdbState, MetaData metaData)
+		public WindowsPdbWriter(ISymbolWriter3 writer, PdbState pdbState, MetaData metaData)
 			: this(pdbState, metaData) {
 			if (writer == null)
 				throw new ArgumentNullException("writer");
@@ -68,13 +68,13 @@ namespace dnlib.DotNet.Pdb {
 			writer.Initialize(metaData);
 		}
 
-		PdbWriter(PdbState pdbState, MetaData metaData) {
+		WindowsPdbWriter(PdbState pdbState, MetaData metaData) {
 			this.pdbState = pdbState;
 			this.metaData = metaData;
 			this.module = metaData.Module;
 			this.instrToOffset = new Dictionary<Instruction, uint>();
 			this.customDebugInfoWriterContext = new PdbCustomDebugInfoWriterContext();
-			this.localsEndScopeIncValue = pdbState.GetCompiler(metaData.module) == Compiler.VisualBasic ? 1 : 0;
+			this.localsEndScopeIncValue = pdbState.Compiler == Compiler.VisualBasic ? 1 : 0;
 		}
 
 		/// <summary>
@@ -98,6 +98,7 @@ namespace dnlib.DotNet.Pdb {
 		public void Write() {
 			writer.SetUserEntryPoint(new SymbolToken(GetUserEntryPointToken()));
 
+			var cdiBuilder = new List<PdbCustomDebugInfo>();
 			foreach (var type in module.GetTypes()) {
 				if (type == null)
 					continue;
@@ -106,7 +107,7 @@ namespace dnlib.DotNet.Pdb {
 						continue;
 					if (!ShouldAddMethod(method))
 						continue;
-					Write(method);
+					Write(method, cdiBuilder);
 				}
 			}
 		}
@@ -123,7 +124,7 @@ namespace dnlib.DotNet.Pdb {
 				// Don't check whether it's the empty string. Only check for null.
 				if (local.Name != null)
 					return true;
-				if (local.PdbAttributes != 0)
+				if (local.Attributes != 0)
 					return true;
 			}
 
@@ -143,7 +144,7 @@ namespace dnlib.DotNet.Pdb {
 			int[] endLines;
 			int[] endColumns;
 
-			public void Write(PdbWriter pdbWriter, IList<Instruction> instrs) {
+			public void Write(WindowsPdbWriter pdbWriter, IList<Instruction> instrs) {
 				checkedPdbDocs.Clear();
 				while (true) {
 					PdbDocument currPdbDoc = null;
@@ -194,12 +195,12 @@ namespace dnlib.DotNet.Pdb {
 		}
 
 		struct CurrentMethod {
-			readonly PdbWriter pdbWriter;
+			readonly WindowsPdbWriter pdbWriter;
 			public readonly MethodDef Method;
 			readonly Dictionary<Instruction, uint> toOffset;
 			public readonly uint BodySize;
 
-			public CurrentMethod(PdbWriter pdbWriter, MethodDef method, Dictionary<Instruction, uint> toOffset) {
+			public CurrentMethod(WindowsPdbWriter pdbWriter, MethodDef method, Dictionary<Instruction, uint> toOffset) {
 				this.pdbWriter = pdbWriter;
 				Method = method;
 				this.toOffset = toOffset;
@@ -223,7 +224,7 @@ namespace dnlib.DotNet.Pdb {
 			}
 		}
 
-		void Write(MethodDef method) {
+		void Write(MethodDef method, List<PdbCustomDebugInfo> cdiBuilder) {
 			uint rid = metaData.GetRid(method);
 			if (rid == 0) {
 				Error("Method {0} ({1:X8}) is not defined in this module ({2})", method, method.MDToken.Raw, module);
@@ -260,14 +261,15 @@ namespace dnlib.DotNet.Pdb {
 				WriteScope(ref info, scope, 0);
 			}
 
-			if (pdbMethod.CustomDebugInfos.Count != 0) {
+			PdbAsyncMethodCustomDebugInfo asyncMethod;
+			GetPseudoCustomDebugInfos(method.CustomDebugInfos, cdiBuilder, out asyncMethod);
+			if (cdiBuilder.Count != 0) {
 				customDebugInfoWriterContext.Logger = GetLogger();
-				var cdiData = PdbCustomDebugInfoWriter.Write(metaData, method, customDebugInfoWriterContext, pdbMethod.CustomDebugInfos);
+				var cdiData = PdbCustomDebugInfoWriter.Write(metaData, method, customDebugInfoWriterContext, cdiBuilder);
 				if (cdiData != null)
 					writer.SetSymAttribute(symbolToken, "MD2", cdiData);
 			}
 
-			var asyncMethod = pdbMethod.AsyncMethod;
 			if (asyncMethod != null) {
 				if (writer3 == null || !writer3.SupportsAsyncMethods)
 					Error("PDB symbol writer doesn't support writing async methods");
@@ -278,6 +280,28 @@ namespace dnlib.DotNet.Pdb {
 			writer.CloseMethod();
 		}
 
+		void GetPseudoCustomDebugInfos(IList<PdbCustomDebugInfo> customDebugInfos, List<PdbCustomDebugInfo> cdiBuilder, out PdbAsyncMethodCustomDebugInfo asyncMethod) {
+			cdiBuilder.Clear();
+			asyncMethod = null;
+			foreach (var cdi in customDebugInfos) {
+				switch (cdi.Kind) {
+				case PdbCustomDebugInfoKind.AsyncMethod:
+					if (asyncMethod != null)
+						Error("Duplicate async method custom debug info");
+					else
+						asyncMethod = (PdbAsyncMethodCustomDebugInfo)cdi;
+					break;
+
+				default:
+					if ((uint)cdi.Kind > byte.MaxValue)
+						Error("Custom debug info {0} isn't supported by Windows PDB files", cdi.Kind);
+					else
+						cdiBuilder.Add(cdi);
+					break;
+				}
+			}
+		}
+
 		uint GetMethodToken(MethodDef method) {
 			uint rid = metaData.GetRid(method);
 			if (rid == 0)
@@ -285,7 +309,7 @@ namespace dnlib.DotNet.Pdb {
 			return new MDToken(MD.Table.Method, rid).Raw;
 		}
 
-		void WriteAsyncMethod(ref CurrentMethod info, PdbAsyncMethod asyncMethod) {
+		void WriteAsyncMethod(ref CurrentMethod info, PdbAsyncMethodCustomDebugInfo asyncMethod) {
 			if (asyncMethod.KickoffMethod == null) {
 				Error("KickoffMethod is null");
 				return;
@@ -378,7 +402,7 @@ namespace dnlib.DotNet.Pdb {
 			writer.CloseScope(startOffset == 0 && endOffset == info.BodySize ? endOffset : endOffset - localsEndScopeIncValue);
 		}
 
-		void AddLocals(MethodDef method, IList<Local> locals, uint startOffset, uint endOffset) {
+		void AddLocals(MethodDef method, IList<PdbLocal> locals, uint startOffset, uint endOffset) {
 			if (locals.Count == 0)
 				return;
 			uint token = metaData.GetLocalVarSigToken(method);
@@ -387,11 +411,18 @@ namespace dnlib.DotNet.Pdb {
 				return;
 			}
 			foreach (var local in locals) {
-				if (local.Name == null && local.PdbAttributes == 0)
+				uint attrs = GetPdbLocalFlags(local.Attributes);
+				if (attrs == 0 && local.Name == null)
 					continue;
-				writer.DefineLocalVariable2(local.Name ?? string.Empty, (uint)local.PdbAttributes,
+				writer.DefineLocalVariable2(local.Name ?? string.Empty, attrs,
 								token, 1, (uint)local.Index, 0, 0, startOffset, endOffset);
 			}
+		}
+
+		static uint GetPdbLocalFlags(PdbLocalAttributes attributes) {
+			if ((attributes & PdbLocalAttributes.DebuggerHidden) != 0)
+				return (uint)CorSymVarFlag.VAR_IS_COMP_GEN;
+			return 0;
 		}
 
 		int GetUserEntryPointToken() {

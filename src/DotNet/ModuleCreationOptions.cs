@@ -1,8 +1,8 @@
 ﻿// dnlib: See LICENSE.txt for more info
 
-using System.Diagnostics.SymbolStore;
 using dnlib.IO;
 using dnlib.DotNet.Pdb;
+using dnlib.DotNet.Pdb.Symbols;
 
 namespace dnlib.DotNet {
 	/// <summary>
@@ -36,8 +36,8 @@ namespace dnlib.DotNet {
 		public object PdbFileOrData { get; set; }
 
 		/// <summary>
-		/// If <c>true</c>, will load the PDB file from disk if present. You don't need to
-		/// initialize <see cref="CreateSymbolReader"/> or <see cref="PdbFileOrData"/>.
+		/// If <c>true</c>, will load the PDB file from disk if present. The default value is <c>true</c>.
+		/// You don't need to initialize <see cref="CreateSymbolReader"/> or <see cref="PdbFileOrData"/>.
 		/// </summary>
 		public bool TryToLoadPdbFromDisk { get; set; }
 
@@ -52,6 +52,7 @@ namespace dnlib.DotNet {
 		/// </summary>
 		public ModuleCreationOptions() {
 			this.PdbImplementation = PdbImplType.Default;
+			this.TryToLoadPdbFromDisk = true;
 		}
 
 		/// <summary>
@@ -61,14 +62,15 @@ namespace dnlib.DotNet {
 		public ModuleCreationOptions(ModuleContext context) {
 			this.Context = context;
 			this.PdbImplementation = PdbImplType.Default;
+			this.TryToLoadPdbFromDisk = true;
 		}
 	}
 
 	/// <summary>
-	/// Creates a <see cref="ISymbolReader"/>
+	/// Creates a <see cref="SymbolReader"/>
 	/// </summary>
 	/// <param name="module">Module</param>
-	/// <returns>A <see cref="ISymbolReader"/> instance for (and now owned by)
+	/// <returns>A <see cref="SymbolReader"/> instance for (and now owned by)
 	/// <paramref name="module"/> or <c>null</c>.</returns>
-	public delegate ISymbolReader CreateSymbolReaderDelegate(ModuleDefMD module);
+	public delegate SymbolReader CreateSymbolReaderDelegate(ModuleDefMD module);
 }

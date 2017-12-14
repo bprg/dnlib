@@ -12,7 +12,7 @@ using dnlib.DotNet.Emit;
 using dnlib.IO;
 using dnlib.Threading;
 
-namespace dnlib.DotNet.Pdb {
+namespace dnlib.DotNet.Pdb.WindowsPdb {
 	/// <summary>
 	/// Reads custom debug infos produced by the C# and Visual Basic compilers. They're stored in PDB files
 	/// as PDB method custom attributes with the name "MD2".
@@ -27,21 +27,9 @@ namespace dnlib.DotNet.Pdb {
 		/// <param name="result">Place all custom debug info in this list</param>
 		/// <param name="data">Custom debug info from the PDB file</param>
 		public static void Read(MethodDef method, CilBody body, IList<PdbCustomDebugInfo> result, byte[] data) {
-			Read(method, body, result, MemoryImageStream.Create(data));
-		}
-
-		/// <summary>
-		/// Reads custom debug info
-		/// </summary>
-		/// <param name="method">Method</param>
-		/// <param name="body">The method's body. Needs to be provided by the caller since we're called from
-		/// PDB-init code when the Body property hasn't been initialized yet</param>
-		/// <param name="result">Place all custom debug info in this list</param>
-		/// <param name="stream">Custom debug info from the PDB file</param>
-		public static void Read(MethodDef method, CilBody body, IList<PdbCustomDebugInfo> result, IBinaryReader stream) {
 			try {
-				using (var reader = new PdbCustomDebugInfoReader(method, body, result, stream))
-					reader.Read();
+				using (var reader = new PdbCustomDebugInfoReader(method, body, MemoryImageStream.Create(data)))
+					reader.Read(result);
 			}
 			catch (ArgumentException) {
 			}
@@ -51,19 +39,21 @@ namespace dnlib.DotNet.Pdb {
 			}
 		}
 
-		readonly MethodDef method;
-		readonly CilBody body;
-		readonly IList<PdbCustomDebugInfo> result;
+		readonly ModuleDef module;
+		readonly TypeDef typeOpt;
+		readonly CilBody bodyOpt;
+		readonly GenericParamContext gpContext;
 		readonly IBinaryReader reader;
 
-		PdbCustomDebugInfoReader(MethodDef method, CilBody body, IList<PdbCustomDebugInfo> result, IBinaryReader reader) {
-			this.method = method;
-			this.body = body;
-			this.result = result;
+		PdbCustomDebugInfoReader(MethodDef method, CilBody body, IBinaryReader reader) {
+			module = method.Module;
+			typeOpt = method.DeclaringType;
+			bodyOpt = body;
+			gpContext = GenericParamContext.Create(method);
 			this.reader = reader;
 		}
 
-		void Read() {
+		void Read(IList<PdbCustomDebugInfo> result) {
 			if (reader.Length < 4)
 				return;
 			int version = reader.ReadByte();
@@ -122,18 +112,20 @@ namespace dnlib.DotNet.Pdb {
 				return usingCountRec;
 
 			case PdbCustomDebugInfoKind.ForwardMethodInfo:
-				method = this.method.Module.ResolveToken(reader.ReadUInt32(), GenericParamContext.Create(this.method)) as IMethodDefOrRef;
+				method = module.ResolveToken(reader.ReadUInt32(), gpContext) as IMethodDefOrRef;
 				if (method == null)
 					return null;
 				return new PdbForwardMethodInfoCustomDebugInfo(method);
 
 			case PdbCustomDebugInfoKind.ForwardModuleInfo:
-				method = this.method.Module.ResolveToken(reader.ReadUInt32(), GenericParamContext.Create(this.method)) as IMethodDefOrRef;
+				method = module.ResolveToken(reader.ReadUInt32(), gpContext) as IMethodDefOrRef;
 				if (method == null)
 					return null;
 				return new PdbForwardModuleInfoCustomDebugInfo(method);
 
 			case PdbCustomDebugInfoKind.StateMachineHoistedLocalScopes:
+				if (bodyOpt == null)
+					return null;
 				count = reader.ReadInt32();
 				if (count < 0)
 					return null;
@@ -168,6 +160,8 @@ namespace dnlib.DotNet.Pdb {
 				return new PdbStateMachineTypeNameCustomDebugInfo(type);
 
 			case PdbCustomDebugInfoKind.DynamicLocals:
+				if (bodyOpt == null)
+					return null;
 				count = reader.ReadInt32();
 				const int dynLocalRecSize = 64 + 4 + 4 + 2 * 64;
 				if (reader.Position + (long)(uint)count * dynLocalRecSize > recPosEnd)
@@ -188,14 +182,14 @@ namespace dnlib.DotNet.Pdb {
 
 					localIndex = reader.ReadInt32();
 					// 'const' locals have index -1 but they're encoded as 0 by Roslyn
-					if (localIndex != 0 && (uint)localIndex >= (uint)body.Variables.Count)
+					if (localIndex != 0 && (uint)localIndex >= (uint)bodyOpt.Variables.Count)
 						return null;
 
 					var nameEndPos = reader.Position + 2 * 64;
 					name = ReadUnicodeZ(nameEndPos, needZeroChar: false);
 					reader.Position = nameEndPos;
 
-					local = localIndex < body.Variables.Count ? body.Variables[localIndex] : null;
+					local = localIndex < bodyOpt.Variables.Count ? bodyOpt.Variables[localIndex] : null;
 					// Roslyn writes 0 to localIndex if it's a 'const' local, try to undo that now
 					if (localIndex == 0 && local != null && local.Name != name)
 						local = null;
@@ -216,6 +210,8 @@ namespace dnlib.DotNet.Pdb {
 				return new PdbEditAndContinueLambdaMapCustomDebugInfo(data);
 
 			case PdbCustomDebugInfoKind.TupleElementNames:
+				if (bodyOpt == null)
+					return null;
 				count = reader.ReadInt32();
 				if (count < 0)
 					return null;
@@ -251,9 +247,9 @@ namespace dnlib.DotNet.Pdb {
 							return null;
 					}
 					else {
-						if ((uint)localIndex >= (uint)body.Variables.Count)
+						if ((uint)localIndex >= (uint)bodyOpt.Variables.Count)
 							return null;
-						local = body.Variables[localIndex];
+						local = bodyOpt.Variables[localIndex];
 					}
 
 					if (local != null && local.Name == name)
@@ -273,7 +269,9 @@ namespace dnlib.DotNet.Pdb {
 		}
 
 		TypeDef GetNestedType(string name) {
-			foreach (var type in method.DeclaringType.NestedTypes.GetSafeEnumerable()) {
+			if (typeOpt == null)
+				return null;
+			foreach (var type in typeOpt.NestedTypes.GetSafeEnumerable()) {
 				if (UTF8String.IsNullOrEmpty(type.Namespace)) {
 					if (type.Name == name)
 						return type;
@@ -325,7 +323,7 @@ namespace dnlib.DotNet.Pdb {
 		}
 
 		Instruction GetInstruction(uint offset) {
-			var instructions = body.Instructions;
+			var instructions = bodyOpt.Instructions;
 			int lo = 0, hi = instructions.Count - 1;
 			while (lo <= hi && hi != -1) {
 				int i = (lo + hi) / 2;

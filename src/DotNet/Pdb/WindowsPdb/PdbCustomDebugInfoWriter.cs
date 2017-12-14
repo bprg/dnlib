@@ -3,7 +3,6 @@
 // C# & Visual Basic compiler's Custom Debug Info is "documented" in source code only, see Roslyn classes:
 //	CustomDebugInfoReader, CustomDebugInfoWriter, CustomDebugInfoEncoder
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -11,7 +10,7 @@ using System.Text;
 using dnlib.DotNet.Emit;
 using dnlib.DotNet.Writer;
 
-namespace dnlib.DotNet.Pdb {
+namespace dnlib.DotNet.Pdb.WindowsPdb {
 	sealed class PdbCustomDebugInfoWriterContext {
 		public ILogger Logger;
 		public readonly MemoryStream MemoryStream;

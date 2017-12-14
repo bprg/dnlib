@@ -2,7 +2,6 @@
 
 using System;
 using dnlib.IO;
-using dnlib.PE;
 using dnlib.Threading;
 
 namespace dnlib.DotNet.MD {
@@ -71,14 +70,14 @@ namespace dnlib.DotNet.MD {
 		public MDTable GenericParamTable { get; private set; }
 		public MDTable MethodSpecTable { get; private set; }
 		public MDTable GenericParamConstraintTable { get; private set; }
-		public MDTable Document { get; private set; }
-		public MDTable MethodDebugInformation { get; private set; }
-		public MDTable LocalScope { get; private set; }
-		public MDTable LocalVariable { get; private set; }
-		public MDTable LocalConstant { get; private set; }
-		public MDTable ImportScope { get; private set; }
-		public MDTable StateMachineMethod { get; private set; }
-		public MDTable CustomDebugInformation { get; private set; }
+		public MDTable DocumentTable { get; private set; }
+		public MDTable MethodDebugInformationTable { get; private set; }
+		public MDTable LocalScopeTable { get; private set; }
+		public MDTable LocalVariableTable { get; private set; }
+		public MDTable LocalConstantTable { get; private set; }
+		public MDTable ImportScopeTable { get; private set; }
+		public MDTable StateMachineMethodTable { get; private set; }
+		public MDTable CustomDebugInformationTable { get; private set; }
 #pragma warning restore
 
 #if THREAD_SAFE
@@ -219,8 +218,8 @@ namespace dnlib.DotNet.MD {
 		/// <summary>
 		/// Initializes MD tables
 		/// </summary>
-		/// <param name="peImage">The PEImage</param>
-		public void Initialize(IPEImage peImage) {
+		/// <param name="typeSystemTableRows">Type system table rows (from #Pdb stream)</param>
+		public void Initialize(uint[] typeSystemTableRows) {
 			if (initialized)
 				throw new Exception("Initialize() has already been called");
 			initialized = true;
@@ -236,6 +235,8 @@ namespace dnlib.DotNet.MD {
 			int maxPresentTables;
 			var dnTableSizes = new DotNetTableSizes();
 			var tableInfos = dnTableSizes.CreateTables(majorVersion, minorVersion, out maxPresentTables);
+			if (typeSystemTableRows != null)
+				maxPresentTables = DotNetTableSizes.normalMaxTables;
 			mdTables = new MDTable[tableInfos.Length];
 
 			ulong valid = validMask;
@@ -252,16 +253,27 @@ namespace dnlib.DotNet.MD {
 			if (HasExtraData)
 				extraData = imageStream.ReadUInt32();
 
-			dnTableSizes.InitializeSizes(HasBigStrings, HasBigGUID, HasBigBlob, sizes);
+			var debugSizes = sizes;
+			if (typeSystemTableRows != null) {
+				debugSizes = new uint[sizes.Length];
+				for (int i = 0; i < 64; i++) {
+					if (DotNetTableSizes.IsSystemTable((Table)i))
+						debugSizes[i] = typeSystemTableRows[i];
+					else
+						debugSizes[i] = sizes[i];
+				}
+			}
 
-			var currentRva = peImage.ToRVA(imageStream.FileOffset) + (uint)imageStream.Position;
+			dnTableSizes.InitializeSizes(HasBigStrings, HasBigGUID, HasBigBlob, sizes, debugSizes);
+
+			var currentPos = (FileOffset)imageStream.Position;
 			foreach (var mdTable in mdTables) {
 				var dataLen = (long)mdTable.TableInfo.RowSize * (long)mdTable.Rows;
-				mdTable.ImageStream = peImage.CreateStream(currentRva, dataLen);
-				var newRva = currentRva + (uint)dataLen;
-				if (newRva < currentRva)
+				mdTable.ImageStream = imageStream.Create(currentPos, dataLen);
+				var newPos = currentPos + (uint)dataLen;
+				if (newPos < currentPos)
 					throw new BadImageFormatException("Too big MD table");
-				currentRva = newRva;
+				currentPos = newPos;
 			}
 
 			InitializeTables();
@@ -313,14 +325,14 @@ namespace dnlib.DotNet.MD {
 			GenericParamTable = mdTables[(int)Table.GenericParam];
 			MethodSpecTable = mdTables[(int)Table.MethodSpec];
 			GenericParamConstraintTable = mdTables[(int)Table.GenericParamConstraint];
-			Document = mdTables[(int)Table.Document];
-			MethodDebugInformation = mdTables[(int)Table.MethodDebugInformation];
-			LocalScope = mdTables[(int)Table.LocalScope];
-			LocalVariable = mdTables[(int)Table.LocalVariable];
-			LocalConstant = mdTables[(int)Table.LocalConstant];
-			ImportScope = mdTables[(int)Table.ImportScope];
-			StateMachineMethod = mdTables[(int)Table.StateMachineMethod];
-			CustomDebugInformation = mdTables[(int)Table.CustomDebugInformation];
+			DocumentTable = mdTables[(int)Table.Document];
+			MethodDebugInformationTable = mdTables[(int)Table.MethodDebugInformation];
+			LocalScopeTable = mdTables[(int)Table.LocalScope];
+			LocalVariableTable = mdTables[(int)Table.LocalVariable];
+			LocalConstantTable = mdTables[(int)Table.LocalConstant];
+			ImportScopeTable = mdTables[(int)Table.ImportScope];
+			StateMachineMethodTable = mdTables[(int)Table.StateMachineMethod];
+			CustomDebugInformationTable = mdTables[(int)Table.CustomDebugInformation];
 		}
 
 		/// <inheritdoc/>

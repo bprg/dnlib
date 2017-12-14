@@ -5,6 +5,7 @@ using System.Diagnostics.SymbolStore;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using dnlib.DotNet.Pdb.WindowsPdb;
 using dnlib.DotNet.Writer;
 
 namespace dnlib.DotNet.Pdb.Dss {
@@ -46,6 +47,7 @@ namespace dnlib.DotNet.Pdb.Dss {
 			if (pdbStream == null)
 				throw new ArgumentNullException("pdbStream");
 			this.writer = writer;
+			this.asyncMethodWriter = writer as ISymUnmanagedAsyncMethodPropertiesWriter;
 			this.pdbStream = pdbStream;
 			this.pdbFileName = pdbFileName;
 		}

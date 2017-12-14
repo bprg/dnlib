@@ -22,6 +22,11 @@ namespace dnlib.DotNet.MD {
 		bool IsCompressed { get; }
 
 		/// <summary>
+		/// <c>true</c> if this is standalone Portable PDB metadata
+		/// </summary>
+		bool IsStandalonePortablePdb { get; }
+
+		/// <summary>
 		/// Gets the .NET header
 		/// </summary>
 		ImageCor20Header ImageCor20Header { get; }
@@ -75,6 +80,11 @@ namespace dnlib.DotNet.MD {
 		/// Returns the #~ or #- tables stream
 		/// </summary>
 		TablesStream TablesStream { get; }
+
+		/// <summary>
+		/// Returns the #Pdb stream or null if it's not a standalone portable PDB file
+		/// </summary>
+		PdbStream PdbStream { get; }
 
 		/// <summary>
 		/// Gets all streams
@@ -325,5 +335,27 @@ namespace dnlib.DotNet.MD {
 		/// </summary>
 		/// <returns>A new <see cref="RidList"/> instance</returns>
 		RidList GetNonNestedClassRidList();
+
+		/// <summary>
+		/// Finds all <c>LocalScope</c> rids owned by <paramref name="methodRid"/>
+		/// </summary>
+		/// <param name="methodRid">Owner <c>Method</c> rid</param>
+		/// <returns>A <see cref="RidList"/> instance containing the valid <c>LocalScope</c> rids</returns>
+		RidList GetLocalScopeRidList(uint methodRid);
+
+		/// <summary>
+		/// Gets the <c>StateMachineMethod</c> rid or 0 if it's not a state machine method
+		/// </summary>
+		/// <param name="methodRid">Owner <c>Method</c> rid</param>
+		/// <returns></returns>
+		uint GetStateMachineMethodRid(uint methodRid);
+
+		/// <summary>
+		/// Finds all <c>CustomDebugInformation</c> rids owned by <paramref name="rid"/> in table <paramref name="table"/>
+		/// </summary>
+		/// <param name="table">A <c>HasCustomDebugInformation</c> table</param>
+		/// <param name="rid">Owner rid</param>
+		/// <returns>A <see cref="RidList"/> instance containing the valid <c>CustomDebugInformation</c> rids</returns>
+		RidList GetCustomDebugInformationRidList(Table table, uint rid);
 	}
 }
